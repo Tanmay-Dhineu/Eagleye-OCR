@@ -101,8 +101,8 @@ def test_cached_job_maps_fields(client):
     assert pm["diag_AC"]["value"] == round((ab ** 2 + bc ** 2) ** 0.5, 3)  # outer corner to outer corner
     pits = {p: {"body_ext": 0, "leg_ext": -3, "undercut": p == "A"} for p in "ABCD"}  # the user's choice wins
     pm = job(client, {"drawing_no": N2009, "pits": pits})["fields"]["pit_marking"]
-    assert pm["b2b_AB"]["value"] == round(2 * 7.994 + 4.43 - 0.15, 3)  # only pit A's side moves in by Ext
-    assert pm["b2b_CD"]["value"] == round(2 * 7.994 + 4.43, 3)
+    assert pm["b2b_AB"]["value"] == round(2 * 7.994 + 4.43, 3)  # A's side moves in by Ext, B's (not undercut) out by Ext
+    assert pm["b2b_CD"]["value"] == round(2 * 7.994 + 4.43 + 0.3, 3)  # neither undercut: B1 + 2·Ext
 
 
 def test_unequal_legs_use_each_pits_own_sheet_and_row(client):
@@ -112,15 +112,15 @@ def test_unequal_legs_use_each_pits_own_sheet_and_row(client):
     assert r["status"] == "done" and r["problems"] == []
     p = r["fields"]["pits"]
     assert p["A"]["source"]["leg_group"] == "uplift" and p["C"]["source"]["leg_group"] == "compression"  # as the site does on AP54
-    assert p["A"]["pit_length"]["value"] == 4.3 and p["C"]["pit_length"]["value"] == 3.75
+    assert p["A"]["pit_length"]["value"] == 4.6 and p["C"]["pit_length"]["value"] == 4.05  # dry soil: B1 + 2·Ext 0.15
     assert p["A"]["cement_kg"]["value"] == round(1.8 / 2 * 4.4 * 50, 1)  # uplift lean 1.8 m³ ÷2: per two legs
     assert p["C"]["cement_kg"]["value"] == round(1.4 / 2 * 4.4 * 50, 1)  # compression lean 1.4 m³
     pm = r["fields"]["pit_marking"]
     assert p["C"]["source"]["undercut"] is False  # dry soil: not undercut unless the user says so
-    assert pm["b2b_CD"]["value"] == round(2 * 11.802 + 3.75, 3)  # C, D: compression row 0/+1.5, MLX 11802 (TRAN = LONG here)
+    assert pm["b2b_CD"]["value"] == round(2 * 11.802 + 4.05, 3)  # C, D: compression row 0/+1.5, MLX 11802 (TRAN = LONG here)
     bc = pm["b2b_BC"]["value"]  # B uplift + C compression: half of each pit's own B1
-    mlx_b = (bc - 11.802 - (4.3 + 3.75) / 2)
-    assert abs(pm["b2b_AB"]["value"] - (2 * mlx_b + 4.3)) < 0.002
+    mlx_b = (bc - 11.802 - (4.6 + 4.05) / 2)
+    assert abs(pm["b2b_AB"]["value"] - (2 * mlx_b + 4.6)) < 0.002
 
 
 def test_missing_extension_row_is_reported(client):
@@ -211,7 +211,7 @@ def test_each_pit_can_have_its_own_drawing_and_says_which_file(client):
     assert [(f["key"], f["drawing_no"], f["pits"]) for f in r["files"]] == [(key_2009, N2009, ["A", "B"]), (DB2, N2511, ["C", "D"])]
     p, pm = r["fields"]["pits"], r["fields"]["pit_marking"]
     assert (p["A"]["source"]["key"], p["A"]["source"]["drawing_no"], p["C"]["source"]["drawing_no"]) == (key_2009, N2009, N2511)
-    assert p["A"]["pit_length"]["value"] == 4.13 and p["C"]["pit_length"]["value"] == 3.75  # each from its own drawing
+    assert p["A"]["pit_length"]["value"] == 4.13 and p["C"]["pit_length"]["value"] == 4.05  # each from its own drawing
     assert r["fields"]["drawing_no"] is None and pm["b2b_BC"]["status"] == "ok"
     assert pm["soil_type"]["status"] == "flagged" and pm["soil_type"]["printed"] == ["DRY SOIL", "WET FISSURED ROCK"]  # pits disagree
     # picked by key with no typed number: nothing to check it against, and it is released
@@ -245,3 +245,22 @@ def test_sync_log_and_health(client):
     h = client.get("/health").json()
     assert h["source"] == "local" and h["last_sync"]["ok"] is True
     assert client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404  # no key needed there: off
+
+
+def test_library_fields_lists_selected_drawings_only(client):
+    """What Eagleye's scheduled sync pulls: ready-to-fill values per selected drawing (CR-01 mobile autofill)."""
+    assert client.get("/api/v1/library/fields").status_code == 401
+    r = client.get("/api/v1/library/fields", headers=H).json()
+    selected = {d["key"] for d in client.get("/api/v1/library", headers=H).json()["drawings"] if d["selection"] == "selected"}
+    assert r["count"] == 2 and {d["key"] for d in r["drawings"]} == selected  # the identical DA copy is not repeated
+    da = next(d for d in r["drawings"] if d["drawing_no"] == N2009)
+    assert da["problems"] == [] and da["fields"]["all"]["pit_depth"]["status"] == "ok"
+    assert da["fields"]["all"]["pit_length"]["value"] == 4.13  # wet fissured rock: B1 4.43 - 2 x 0.15
+    db2 = next(d for d in r["drawings"] if d["drawing_no"] == N2511)
+    assert set(db2["fields"]) == {"uplift", "compression"} and db2["rev"] == 1.0 and len(db2["sha256"]) == 64
+
+
+def test_library_fields_reports_unread_drawing(client, monkeypatch):
+    monkeypatch.setattr(store, "get_result", lambda sha256, parser_version: None)
+    r = client.get("/api/v1/library/fields", headers=H).json()
+    assert all(d["fields"] is None and d["problems"] == ["not_read"] for d in r["drawings"])

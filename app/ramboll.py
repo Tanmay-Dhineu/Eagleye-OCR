@@ -30,6 +30,12 @@ def ext_label(t):
     return (0.0, n[0]) if len(n) == 1 else None
 
 
+def stub_cover(text):
+    """Note 6 on the detail sheet: '… & CLEAR COVER TO STUB IS 150mm ABOVE THE …' → 150.0 (mm); None if absent."""
+    m = re.search(r"CLEAR\s*COVER\s*TO\s*STUB\s*(?:IS|=)\s*(\d+)\s*MM", text or "", re.I)
+    return float(m[1]) if m else None
+
+
 def parse(cells):
     T = lambda c: c["text"] if c else ""
     cy = lambda c: (c["box"][1] + c["box"][3]) / 2

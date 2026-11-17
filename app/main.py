@@ -90,6 +90,22 @@ def library(status: Literal["active", "removed"] | None = None):
     return {"count": len(rows), "drawings": rows}
 
 
+@app.get("/api/v1/library/fields", dependencies=[Depends(auth)])
+def library_fields():
+    """Ready-to-fill Foundation form values of every selected drawing, per leg group (mapping.drawing_fields), for
+    Eagleye to send to the site app. Reads the extraction cache only; a drawing not read yet says so (`not_read`).
+    Nothing is given for a drawing whose number, sheets or revision do not hold together."""
+    rows = []
+    for r in store.library():
+        if r["selection"] != "selected":
+            continue
+        result = store.get_result(r["sha256"], source.PARSER_VERSION) if r["sha256"] else None
+        problems = ["not_read"] if result is None else list(result["problems"])
+        rows.append({"key": r["key"], "drawing_no": r["drawing_no"], "rev": r["rev"], "sha256": r["sha256"],
+                     "fields": None if problems else mapping.drawing_fields(result), "problems": problems})
+    return {"count": len(rows), "drawings": rows}
+
+
 @app.get("/api/v1/drawings/pdf", dependencies=[Depends(auth)])
 def drawing_pdf(key: str):
     """The PDF itself (for Eagleye to keep its own copy, so the site app never has to reach DocHub)."""

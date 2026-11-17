@@ -126,6 +126,13 @@ def _ocr_page(img, dpi):
     return cells, rot
 
 
+def page_texts(pdf_path):
+    """{page_no: whole-page text} for pages with a text layer. The general notes (stub cover, …) are free text outside
+    the ruled cells, so pages() never sees them. Scanned pages are left out: their notes are not read."""
+    with pdfplumber.open(str(pdf_path)) as pl:
+        return {i + 1: p.dedupe_chars().extract_text() or "" for i, p in enumerate(pl.pages) if len(p.chars) > 50}
+
+
 def pages(pdf_path, force_ocr=False):
     """Yield (page_no, mode, rotation, cells) for every page of the PDF."""
     dpi, scale = settings.DPI, settings.DPI / 72

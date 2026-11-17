@@ -4,7 +4,8 @@ import hashlib
 from . import cells, checks, ramboll, title
 from .drawing_no import consensus
 
-PARSER_VERSION = 3  # 2: drawing title properties; 3: pages that are not drawing sheets are set aside
+PARSER_VERSION = 4  # 2: drawing title properties; 3: pages that are not drawing sheets are set aside; 4: stub cover note
+STUB_COVER_RANGE = (25, 200)  # mm, as printed on the drawings seen (150)
 
 
 def sha256(path):
@@ -17,9 +18,13 @@ def sha256(path):
 
 def extract(pdf_path, force_ocr=False):
     sheets, problems = [], []
+    texts = {} if force_ocr else cells.page_texts(pdf_path)
     for page_no, mode, rot, page_cells in cells.pages(pdf_path, force_ocr):
         p = ramboll.parse(page_cells)
         values, status = checks.resolve(p, ocr=mode == "ocr")
+        cover = ramboll.stub_cover(texts.get(page_no)) if mode == "text" else None
+        if cover is not None and STUB_COVER_RANGE[0] <= cover <= STUB_COVER_RANGE[1]:  # exact text: nothing to cross-check
+            values["stub_cover"], status["stub_cover"] = cover, "ok"
         sheets.append({
             "page": page_no, "mode": mode, "rotation": rot, "sheet": p.get("sheet"),
             "kind": "detail" if p.get("dims") or p.get("bbs") else "excavation" if p.get("exc") else "unknown",

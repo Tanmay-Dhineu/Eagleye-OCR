@@ -19,7 +19,6 @@ SOIL_OPTIONS = {"DRY FISSURED ROCK": "DFR", "WET FISSURED ROCK": "WFR", "SUBMERG
                 "HARD ROCK": "Hard Rock", "DRY SOIL": "DRY", "WET SOIL": "WET", "DRY BLACK COTTON": "DBC",
                 "WET BLACK COTTON": "WBC", "SUBMERGED BLACK COTTON": "SBC", "NORMAL DRY SOIL": "NDS"}
 FLAGGED = {"value": None, "status": "flagged"}
-ZERO = {"value": 0.0, "status": "ok"}
 
 
 def _get(values, k):
@@ -38,6 +37,49 @@ def _field(values, keys, fn):
 
 def _round(fn, nd=3):
     return lambda *a: round(fn(*a), nd)
+
+
+def _pit_size(v, undercut):
+    """Pit length = width (m). Undercut (rock): Ext is inside the footing, B1 − 2·Ext. Otherwise Ext is outside the
+    footing (D&E remark), B1 + 2·Ext: on the Cuddapah line (CAT-A, Ext 150) the site entered B1 − 0.3 on DFR/WFR and
+    B1 + 0.3 on every other soil in 97–98% of 861 pits."""
+    sign = -1 if undercut else 1
+    return _field({"b1": _get(v, "B1"), "ext": _get(v, "Ext")}, ["b1", "ext"], _round(lambda b1, e: b1 + sign * 2 * e / 1000))
+
+
+# per-pit concrete volumes (m³), one leg, from the DIMENSIONS table; the concrete identity in checks.py verifies them
+VOLUMES = {
+    "frustum_volume": (["B1", "G1", "B2", "G2"], lambda b1, g1, b2, g2: b1 ** 2 * g1 + g2 / 3 * (b1 ** 2 + b2 ** 2 + b1 * b2)),
+    "stepbox_volume": (["S", "B3", "G3"], lambda s, b3, g3: g3 / 3 * (s ** 2 + b3 ** 2 + s * b3)),
+    "chimney_volume": (["S", "H"], lambda s, h: s ** 2 * (h + 0.225)),
+    "raised_chimney_volume": (["S", "H1"], lambda s, h1: s ** 2 * (h1 - 0.225)),
+}
+CEMENT_KG_PER_CUM = 4.4 * 50  # PCC M10: 4.4 bags of 50 kg per m³
+
+
+def _volumes(v):
+    return {k: _field(v, keys, _round(fn)) for k, (keys, fn) in VOLUMES.items()}
+
+
+def drawing_fields(result):
+    """{leg_group: {value key: {value, status}}} for one drawing, independent of the tower: what Eagleye sends to the
+    site app so it can fill the Foundation forms offline once the pit's soil (hence its drawing) is known.
+    Undercut comes from the drawing's own soil (rock → undercut); an unread soil flags the pit size."""
+    out = {}
+    for s in result["sheets"]:
+        if s["kind"] != "detail" or s["leg_group"] in out:
+            continue
+        v, legs = s["values"], s["legs"] or 4
+        soil = _get(v, "soil_type")
+        size = _pit_size(v, "ROCK" in str(soil["value"]).upper()) if soil["value"] else FLAGGED
+        out[s["leg_group"]] = {
+            "pit_depth": _get(v, "D"), "pit_length": size, "pit_width": size,
+            "pcc_m10": _field(v, ["lean"], _round(lambda lean: lean / legs)),
+            "cement_kg": _field(v, ["lean"], _round(lambda lean: lean / legs * CEMENT_KG_PER_CUM, 1)),
+            "stub_clearance_mm": _field(v, ["stub_cover", "dp"], _round(lambda c, dp: c + dp, 0)),  # cover above the PCC
+            **_volumes(v),
+        }
+    return out
 
 
 def _detail_sheet(result, pit):
@@ -92,21 +134,16 @@ def map_fields(results, pits):
         if undercut is None:
             undercut, undercut_from = "ROCK" in str(_get(v, "soil_type")["value"]).upper(), "soil type"
         rows[pit] = (v, row, bool(undercut))
-        ext = _get(v, "Ext") if undercut else ZERO  # mm
-        size = _field({"b1": _get(v, "B1"), "ext": ext}, ["b1", "ext"], _round(lambda b1, e: b1 - 2 * e / 1000))
+        size = _pit_size(v, undercut)
         legs = d["legs"] or 4
         out["pits"][pit] = {
             "source": {"key": req.get("key"), "drawing_no": result["drawing_no"], "rev": result["rev"],
                        "sheet": d["sheet"], "leg_group": d["leg_group"], "legs_per_quantity": legs, "extension_row": row.get("ext"),
                        "undercut": bool(undercut), "undercut_from": undercut_from},
-            "cement_kg": _field(v, ["lean"], _round(lambda lean: lean / legs * 4.4 * 50, 1)),  # PCC: lean m³ per pit × 4.4 bags × 50 kg
+            "cement_kg": _field(v, ["lean"], _round(lambda lean: lean / legs * CEMENT_KG_PER_CUM, 1)),  # PCC: lean m³ per pit
             "pit_length": size, "pit_width": size, "pit_depth": _get(v, "D"),  # B1 is the same on both faces
             "bbs": _bbs(v),
-            "frustum_volume": _field(v, ["B1", "G1", "B2", "G2"], _round(
-                lambda b1, g1, b2, g2: b1 ** 2 * g1 + g2 / 3 * (b1 ** 2 + b2 ** 2 + b1 * b2))),
-            "stepbox_volume": _field(v, ["S", "B3", "G3"], _round(lambda s, b3, g3: g3 / 3 * (s ** 2 + b3 ** 2 + s * b3))),
-            "chimney_volume": _field(v, ["S", "H"], _round(lambda s, h: s ** 2 * (h + 0.225))),
-            "raised_chimney_volume": _field(v, ["S", "H1"], _round(lambda s, h1: s ** 2 * (h1 - 0.225))),
+            **_volumes(v),
         }
         out["pit_marking"][f"depth_{pit}"] = _get(v, "D")
         soils[pit] = _get(v, "soil_type")
@@ -118,10 +155,9 @@ def map_fields(results, pits):
         out["pit_marking"]["soil_type"] = ({"value": option, "status": soil["status"], "printed": soil["value"]} if option else
                                            {**FLAGGED, "printed": soil["value"] if len(printed) == 1 else sorted(printed)})
     # Back to back (m), outer edge to outer edge of the two pits = MLX_i + MLX_j + half_i + half_j, where a pit's half
-    # is B1/2, less Ext when it is undercut. AB and CD run along MLX,LONG, BC and AD along MLX,TRAN: on drawings
+    # is half the pit size (B1/2 ∓ Ext, see _pit_size). AB and CD run along MLX,LONG, BC and AD along MLX,TRAN: on drawings
     # 2009/9112 every site entry that follows a formula follows this one (12-13 of 34 towers; the rest are measured).
-    half = {pit: _field({"b1": v.get("B1"), "ext": v.get("Ext") if undercut else ZERO}, ["b1", "ext"],
-                        lambda b1, e: b1 / 2 - e / 1000) for pit, (v, _, undercut) in rows.items()}
+    half = {pit: _field({"size": _pit_size(v, undercut)}, ["size"], lambda size: size / 2) for pit, (v, _, undercut) in rows.items()}
     for a, b, axis in (("A", "B", "mlx_l"), ("B", "C", "mlx_t"), ("C", "D", "mlx_l"), ("A", "D", "mlx_t")):
         if a in rows and b in rows:
             inputs = {"ma": rows[a][1].get(axis), "mb": rows[b][1].get(axis), "ha": half[a], "hb": half[b]}

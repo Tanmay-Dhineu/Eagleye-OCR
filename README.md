@@ -61,6 +61,7 @@ All calls except `/health` need the `X-Service-Key` header. Everything is read-o
 | `GET /health` | up, source, last DocHub sync |
 | `POST /api/v1/drawings/reindex` | read DocHub now (background); `GET` the same path for the log of each run |
 | `GET /api/v1/library[?status=active]` | one flat key-value row per drawing file: DocHub id, name, folder, drawing no., revision, tower type, angle, extension from/to, raised chimney, leg type, soil, variant, and `selection` (is this the file its drawing number selects) |
+| `GET /api/v1/library/fields` | ready-to-fill form values (depth, pit size, PCC, cement, stub clearance, concrete volumes) per selected drawing and leg group, for the site app's offline autofill; `not_read` until the drawing is read |
 | `GET /api/v1/drawings/pdf?key=…` | the PDF itself |
 | `GET /api/v1/drawings?drawing_no=…` | match a typed drawing number (matched / probable / ambiguous / multiple / missing / not_approved) |
 | `POST /api/v1/drawings/upload` | manual fallback: PDF as the body; returns a `key` for a job |
