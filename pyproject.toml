@@ -1,0 +1,22 @@
+[project]
+name = "eagleye-ocr"
+version = "0.1.0"
+description = "CR-01: foundation drawing extraction service for Eagleye (OCR + deterministic rules, no LLM)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pypdfium2>=4.30",
+    "pdfplumber>=0.11",
+    "pytesseract>=0.3.13",
+    "pillow>=10",
+    "numpy>=2",
+    "scipy>=1.14",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
