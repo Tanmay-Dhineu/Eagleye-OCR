@@ -61,3 +61,35 @@ def test_drawing_without_stub_note_flags_clearance_only():
         s["values"].pop("stub_cover", None)
     f = mapping.drawing_fields(e)["all"]
     assert f["stub_clearance_mm"]["status"] == "flagged" and f["cement_kg"]["status"] == "ok"
+
+
+def test_2002_bar_schedule_rows_in_the_reinforcement_form_units():
+    # Reinforcement "Steel Road details" grid: Type | Length (m) | Number of Bars (per pit = per leg) | Diameter (mm)
+    bbs = mapping.drawing_fields(ex("FND-2002.pdf"))["all"]["bbs"]
+    assert bbs["status"] == "ok"
+    assert bbs["value"] == [
+        {"type": "A", "length": 3.25, "bars": 46.0, "dia": 10.0},
+        {"type": "B", "length": 3.51, "bars": 36.0, "dia": 12.0},
+        {"type": "D", "length": 4.2, "bars": 8.0, "dia": 16.0},
+        {"type": "E1", "length": 2.07, "bars": 16.0, "dia": 8.0},
+        {"type": "E2", "length": 1.55, "bars": 16.0, "dia": 8.0},
+    ]
+
+
+def test_one_doubtful_bar_row_withholds_the_whole_schedule():
+    # a bar list with a row missing or wrong is worse than none: the site types it as before
+    e = ex("FND-2002.pdf")
+    for s in e["sheets"]:
+        if "bbs1.dia" in s["values"]:
+            s["values"]["bbs1.dia"] = {"value": None, "status": "flagged"}
+    f = mapping.drawing_fields(e)["all"]
+    assert f["bbs"] == {"value": None, "status": "flagged"}
+    assert f["pit_depth"]["status"] == "ok"
+
+
+def test_schedule_not_matching_the_drawing_total_is_withheld():
+    e = ex("FND-2002.pdf")
+    for s in e["sheets"]:
+        if "reinf" in s["values"]:
+            s["values"]["reinf"] = {"value": None, "status": "flagged"}
+    assert mapping.drawing_fields(e)["all"]["bbs"]["status"] == "flagged"

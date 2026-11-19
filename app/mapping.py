@@ -78,6 +78,7 @@ def drawing_fields(result):
             "cement_kg": _field(v, ["lean"], _round(lambda lean: lean / legs * CEMENT_KG_PER_CUM, 1)),
             "stub_clearance_mm": _field(v, ["stub_cover", "dp"], _round(lambda c, dp: c + dp, 0)),  # cover above the PCC
             **_volumes(v),
+            "bbs": _bbs_field(v),
         }
     return out
 
@@ -180,10 +181,21 @@ def _bbs(v):
     rows, i = [], 0
     while f"bbs{i}.mark" in v:
         length = _get(v, f"bbs{i}.length")
-        rows.append({"type": v[f"bbs{i}.mark"], "length": _field({"l": length}, ["l"], _round(lambda l: l / 1000)),
-                     "bars": v[f"bbs{i}.nos_leg"], "dia": v[f"bbs{i}.dia"]})
+        rows.append({"type": _get(v, f"bbs{i}.mark"), "length": _field({"l": length}, ["l"], _round(lambda l: l / 1000)),
+                     "bars": _get(v, f"bbs{i}.nos_leg"), "dia": _get(v, f"bbs{i}.dia")})
         i += 1
     return rows
+
+
+def _bbs_field(v):
+    """The whole bar schedule for the Reinforcement "Steel Road details" grid, or flagged: a bar list with one row
+    missing or misread is worse than none, so it is released only when every cell was read for sure and the rows add
+    up to the drawing's reinforcement total (checks.py)."""
+    rows = _bbs(v)
+    cells = [c for r in rows for c in r.values()]
+    if not rows or _get(v, "reinf")["status"] != "ok" or any(c["value"] is None or c["status"] != "ok" for c in cells):
+        return FLAGGED
+    return {"value": [{k: c["value"] for k, c in r.items()} for r in rows], "status": "ok"}
 
 
 def wrong_drawing(result, requested):
